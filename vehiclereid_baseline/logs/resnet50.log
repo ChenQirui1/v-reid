@@ -1,0 +1,43 @@
+Namespace(data='../dataset/VeRi/image_train/', trainlist='./list/veri_train_list.txt', dataset='veri', workers=4, batch_size=64, start_epoch=0, backbone='resnet50', weights='', scale_size=256, num_classes=576, write_out=True, crop_size=224, val_step=5, epochs=4, save_dir='./models/resnet50/', num_gpu=4)
+====> Creating dataloader...
+0.8
+lr is  5e-05
+  batch 1 loss: 0.06895858764648438
+  batch 101 loss: 6.941750559806824
+  batch 201 loss: 6.5401901483535765
+  batch 301 loss: 6.379849367141723
+  batch 401 loss: 6.331887397766113
+7555
+LOSS train 6.331887397766113 valid 6.467807769775391
+lr is  0.0001
+  batch 1 loss: 0.06317220211029052
+  batch 101 loss: 6.233800015449524
+  batch 201 loss: 6.120234584808349
+  batch 301 loss: 6.001172022819519
+  batch 401 loss: 5.809169993400574
+7555
+LOSS train 5.809169993400574 valid 5.785195350646973
+lr is  0.00015000000000000001
+  batch 1 loss: 0.054762563705444335
+  batch 101 loss: 5.558574190139771
+  batch 201 loss: 5.401097373962402
+  batch 301 loss: 5.2745409059524535
+  batch 401 loss: 5.2003985786437985
+7555
+LOSS train 5.2003985786437985 valid 5.224265098571777
+lr is  0.0002
+  batch 1 loss: 0.05424964904785156
+  batch 101 loss: 5.011583242416382
+  batch 201 loss: 4.92060462474823
+  batch 301 loss: 4.8339116621017455
+  batch 401 loss: 4.778778238296509
+7555
+LOSS train 4.778778238296509 valid 4.687349796295166
+lr is  0.00025
+  batch 1 loss: 0.046783428192138675
+  batch 101 loss: 4.6338770389556885
+  batch 201 loss: 4.512984638214111
+  batch 301 loss: 4.4877428674697875
+  batch 401 loss: 4.387727851867676
+7555
+LOSS train 4.387727851867676 valid 4.4050612449646
