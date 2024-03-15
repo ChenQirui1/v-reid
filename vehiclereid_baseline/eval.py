@@ -16,6 +16,7 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+from torchvision.datasets import FakeData
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import os.path as osp
@@ -121,6 +122,15 @@ def get_dataset(dataset_name, query_dir, query_list, gallery_dir, gallery_list):
     return query_loader, gallery_loader
 
 
+def fake_dataset(image_size):
+    query_set = FakeData(size=1000, image_size=(3, image_size, image_size))
+    gallery_set = FakeData(size=1000, image_size=(3, image_size, image_size))
+    query_loader = DataLoader(query_set)
+    gallery_loader = DataLoader(gallery_set)
+
+    return query_loader, gallery_loader
+
+
 def main():
     global args
     args = parser.parse_args()
@@ -134,9 +144,13 @@ def main():
     gallery_list = args.gallerylist
     dataset_name = args.dataset
 
-    query_loader, gallery_loader = get_dataset(
-        dataset_name, query_dir, query_list, gallery_dir, gallery_list
-    )
+    # query_loader, gallery_loader = get_dataset(
+    #     dataset_name, query_dir, query_list, gallery_dir, gallery_list
+    # )
+
+    # ! swap out this implemention in real runs
+    query_loader, gallery_loader = fake_dataset(args.crop_size)
+
     # load network
     if args.backbone == "resnet50":
         model = resnet50(num_classes=args.num_classes)
@@ -154,9 +168,9 @@ def main():
         except Exception as e:
             print("!!!load weights failed !!! path is ", args.weights)
             return
-    else:
-        print("!!!Load Weights PATH ERROR!!!")
-        return
+    # else:
+    #     print("!!!Load Weights PATH ERROR!!!")
+    #     return
     model.cuda()
     mkdir_if_missing(args.save_dir)
 
@@ -250,6 +264,11 @@ def compute(
     print("Saving feature mat...")
     np.save(args.save_dir + "queryFeat.npy", qf)
     np.save(args.save_dir + "galleryFeat.npy", gf)
+
+    # pairwise l2 distance between query vector and gallery
+    # similar to https://scikit-learn.org/0.16/modules/generated/sklearn.metrics.pairwise.euclidean_distances.html
+    # but this calculates for a batch
+    # can use cdist from pytorch also
     distmat = (
         torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n)
         + torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
