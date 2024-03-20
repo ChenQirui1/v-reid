@@ -15,7 +15,7 @@ import torchvision.models as models
 from torch.utils.data import DataLoader
 import os.path as osp
 from networks.resnet import resnet50, resnet101
-from tqdm import tqdm
+# from tqdm import tqdm
 
 # from dataset.dataset import VeriDataset, AicDataset
 
@@ -166,7 +166,6 @@ def get_dataset(dataset_name, data_dir, train_list):
 
 
 def main():
-
     global args, best_prec1
     args = parser.parse_args()
     print(args)

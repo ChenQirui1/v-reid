@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-
 import torch.distributed as dist
 import torch.optim
 import torch.utils.data
@@ -133,6 +132,9 @@ def fake_dataset(image_size):
 
 def main():
     global args
+
+    torch.multiprocessing.set_sharing_strategy('file_system')
+
     args = parser.parse_args()
     print(args)
     # Create dataloader
@@ -144,36 +146,41 @@ def main():
     gallery_list = args.gallerylist
     dataset_name = args.dataset
 
-    # query_loader, gallery_loader = get_dataset(
-    #     dataset_name, query_dir, query_list, gallery_dir, gallery_list
-    # )
+    query_loader, gallery_loader = get_dataset(
+        dataset_name, query_dir, query_list, gallery_dir, gallery_list
+    )
 
     # ! swap out this implemention in real runs
-    query_loader, gallery_loader = fake_dataset(args.crop_size)
+    # query_loader, gallery_loader = fake_dataset(args.crop_size)
+
+    print(torch.cuda.is_available())
 
     # load network
     if args.backbone == "resnet50":
         model = resnet50(num_classes=args.num_classes)
     elif args.backbone == "resnet101":
         model = resnet101(num_classes=args.num_classes)
-
+        
     print(args.weights)
 
     if args.weights != "":
         try:
             model = torch.nn.DataParallel(model)
+            print("current path:", os.path.realpath(__file__))
             ckpt = torch.load(args.weights)
+            # print(ckpt["state_dict"])
             model.load_state_dict(ckpt["state_dict"])
             print("!!!load weights success !!! path is ", args.weights)
         except Exception as e:
             print("!!!load weights failed !!! path is ", args.weights)
+            print(e)
             return
     # else:
     #     print("!!!Load Weights PATH ERROR!!!")
     #     return
     model.cuda()
     mkdir_if_missing(args.save_dir)
-
+   
     cudnn.benchmark = True
     evaluate(query_loader, gallery_loader, model)
 
@@ -199,11 +206,12 @@ def evaluate(query_loader, gallery_loader, model):
     for i, (image, pid, camid) in enumerate(query_loader):
         # if i == 10:
         #     break
-        print("Extracting feature of image " + "%d:" % i)
+        # print("Extracting feature of image " + "%d:" % i)
         query_pids.append(pid)
         query_camids.append(camid)
 
-        # image = torch.autograd.Variable(image).cuda()
+        # image = image.cuda()
+        image = torch.autograd.Variable(image).cuda()
         output, feat = model(image)
 
         query_feats.append(feat.data.cpu())
@@ -218,7 +226,7 @@ def evaluate(query_loader, gallery_loader, model):
     for i, (image, pid, camid) in enumerate(gallery_loader):
         # if i == 20:
         #     break
-        print("Extracting feature of image " + "%d:" % i)
+        # print("Extracting feature of image " + "%d:" % i)
         gallery_pids.append(pid)
         gallery_camids.append(camid)
         image = torch.autograd.Variable(image).cuda()
@@ -229,6 +237,13 @@ def evaluate(query_loader, gallery_loader, model):
     gallery_time = time.time() - end
     print("Processing gallery set... \tTime[{0:.3f}]".format(gallery_time))
     print("Computing CMC and mAP...")
+
+    # print("query_feats",len(query_feats))
+    # print("query_pids", len(query_pids))
+    # print("query_camids", len(query_camids))
+    # print("gallery_feats",len(gallery_feats))
+    # print("gallery_pids",len(gallery_pids))
+    # print("gallery_camids", len(gallery_camids))
     cmc, mAP, distmat = compute(
         query_feats,
         query_pids,
@@ -252,12 +267,29 @@ def compute(
 
     q_pids = np.asarray(query_pids)
     q_camids = np.asarray(query_camids).T
+    
 
     # gallery
     gf = torch.cat(gallery_feats, dim=0)
+
     g_pids = np.asarray(gallery_pids)
     g_camids = np.asarray(gallery_camids).T
 
+    print("query_feat: ", qf.shape)
+    print("query_pid: ", q_pids.shape)
+    print("query_camids: ", q_camids.shape)
+    print("gallery_feats: ", gf.shape)
+    print("gallery_pids: ", g_pids.shape)
+    print("gallery_camids: ", g_camids.shape)
+
+    """
+    query_feat:  torch.Size([1678, 2048, 1, 1])
+    query_pid:  (1678, 1)
+    query_camids:  (1, 1678)
+    gallery_feats:  torch.Size([11579, 2048, 1, 1])
+    gallery_pids:  (11579, 1)
+    gallery_camids:  (1, 11579)
+    """
     m, n = qf.shape[0], gf.shape[0]
     qf = qf.view(m, -1)
     gf = gf.view(n, -1)
@@ -269,12 +301,18 @@ def compute(
     # similar to https://scikit-learn.org/0.16/modules/generated/sklearn.metrics.pairwise.euclidean_distances.html
     # but this calculates for a batch
     # can use cdist from pytorch also
-    distmat = (
-        torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n)
-        + torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
-    )
-    distmat.addmm_(1, -2, qf, gf.t())
+
+    # distmat = (
+    #     torch.pow(qf, 2).sum(dim=1, keepdim=True).expand(m, n)
+    #     + torch.pow(gf, 2).sum(dim=1, keepdim=True).expand(n, m).t()
+    # )
+    # distmat.addmm_(1, -2, qf, gf.t())
+    # distmat = distmat.cpu().numpy()
+
+
+    distmat = torch.cdist(qf,gf,p=2)
     distmat = distmat.cpu().numpy()
+
 
     q_camids = np.squeeze(q_camids)
     g_camids = np.squeeze(g_camids)
@@ -293,6 +331,7 @@ def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=100):
     if num_g < max_rank:
         max_rank = num_g
         print("Note: number of gallery samples is quite small, got {}".format(num_g))
+    
     indices = np.argsort(distmat, axis=1)
     matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
     print("Saving resulting indexes...", indices.shape)
@@ -313,6 +352,10 @@ def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=100):
         remove = (g_pids[order] == q_pid) & (g_camids[order] == q_camid)
         keep = np.invert(remove)
 
+
+        print(matches.shape)
+        print(q_idx)
+        print(keep.shape)
         # compute cmc curve
         # binary vector, positions with value 1 are correct matches
         orig_cmc = matches[q_idx][keep]
