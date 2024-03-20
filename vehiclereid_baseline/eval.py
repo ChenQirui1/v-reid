@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
+
 import torch.distributed as dist
 import torch.optim
 import torch.utils.data
@@ -210,8 +211,8 @@ def evaluate(query_loader, gallery_loader, model):
         query_pids.append(pid)
         query_camids.append(camid)
 
-        # image = image.cuda()
-        image = torch.autograd.Variable(image).cuda()
+        image = image.cuda()
+        # image = torch.autograd.Variable(image).cuda()
         output, feat = model(image)
 
         query_feats.append(feat.data.cpu())
@@ -226,7 +227,7 @@ def evaluate(query_loader, gallery_loader, model):
     for i, (image, pid, camid) in enumerate(gallery_loader):
         # if i == 20:
         #     break
-        # print("Extracting feature of image " + "%d:" % i)
+        print("Extracting feature of image " + "%d:" % i)
         gallery_pids.append(pid)
         gallery_camids.append(camid)
         image = torch.autograd.Variable(image).cuda()
@@ -237,13 +238,6 @@ def evaluate(query_loader, gallery_loader, model):
     gallery_time = time.time() - end
     print("Processing gallery set... \tTime[{0:.3f}]".format(gallery_time))
     print("Computing CMC and mAP...")
-
-    # print("query_feats",len(query_feats))
-    # print("query_pids", len(query_pids))
-    # print("query_camids", len(query_camids))
-    # print("gallery_feats",len(gallery_feats))
-    # print("gallery_pids",len(gallery_pids))
-    # print("gallery_camids", len(gallery_camids))
     cmc, mAP, distmat = compute(
         query_feats,
         query_pids,
@@ -267,29 +261,12 @@ def compute(
 
     q_pids = np.asarray(query_pids)
     q_camids = np.asarray(query_camids).T
-    
 
     # gallery
     gf = torch.cat(gallery_feats, dim=0)
-
     g_pids = np.asarray(gallery_pids)
     g_camids = np.asarray(gallery_camids).T
 
-    print("query_feat: ", qf.shape)
-    print("query_pid: ", q_pids.shape)
-    print("query_camids: ", q_camids.shape)
-    print("gallery_feats: ", gf.shape)
-    print("gallery_pids: ", g_pids.shape)
-    print("gallery_camids: ", g_camids.shape)
-
-    """
-    query_feat:  torch.Size([1678, 2048, 1, 1])
-    query_pid:  (1678, 1)
-    query_camids:  (1, 1678)
-    gallery_feats:  torch.Size([11579, 2048, 1, 1])
-    gallery_pids:  (11579, 1)
-    gallery_camids:  (1, 11579)
-    """
     m, n = qf.shape[0], gf.shape[0]
     qf = qf.view(m, -1)
     gf = gf.view(n, -1)
@@ -349,13 +326,13 @@ def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=100):
 
         # remove gallery samples that have the same pid and camid with query
         order = indices[q_idx]
-        remove = (g_pids[order] == q_pid) & (g_camids[order] == q_camid)
+        remove = np.squeeze(g_pids[order] == q_pid) & np.squeeze(g_camids[order] == q_camid)
         keep = np.invert(remove)
 
-
-        print(matches.shape)
-        print(q_idx)
-        print(keep.shape)
+        # print(keep.shape)
+        # print(matches.shape) # (1678, 11579, 1)
+        # print(q_idx)
+        # print(keep.shape) # (11579,11579)
         # compute cmc curve
         # binary vector, positions with value 1 are correct matches
         orig_cmc = matches[q_idx][keep]
