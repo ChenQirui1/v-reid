@@ -1,15 +1,11 @@
 import argparse
-import os, sys
-import shutil
+import os
 import time
 import numpy as np
-import os
 import torch
-import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-
-import torch.distributed as dist
+import matplotlib.pyplot as plt
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
@@ -19,9 +15,8 @@ import torchvision.models as models
 from torchvision.datasets import FakeData
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-import os.path as osp
 from torch.autograd import Variable
-import math
+from tqdm import tqdm
 from networks.resnet import resnet50, resnet101
 from dataset.dataset import VeriDataset
 
@@ -81,6 +76,12 @@ parser.add_argument(
     type=int,
     help="save top K indexes of results for each query (default: 100)",
 )
+parser.add_argument(
+    "--nocalc",
+    default=False,
+    help="no calculation of features and distance matrix",
+    action=argparse.BooleanOptionalAction,
+)
 
 
 def get_dataset(dataset_name, query_dir, query_list, gallery_dir, gallery_list):
@@ -134,7 +135,7 @@ def fake_dataset(image_size):
 def main():
     global args
 
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    torch.multiprocessing.set_sharing_strategy("file_system")
 
     args = parser.parse_args()
     print(args)
@@ -154,14 +155,14 @@ def main():
     # ! swap out this implemention in real runs
     # query_loader, gallery_loader = fake_dataset(args.crop_size)
 
-    print(torch.cuda.is_available())
+    print("Cuda available: ", torch.cuda.is_available())
 
     # load network
     if args.backbone == "resnet50":
         model = resnet50(num_classes=args.num_classes)
     elif args.backbone == "resnet101":
         model = resnet101(num_classes=args.num_classes)
-        
+
     print(args.weights)
 
     if args.weights != "":
@@ -181,7 +182,7 @@ def main():
     #     return
     model.cuda()
     mkdir_if_missing(args.save_dir)
-   
+
     cudnn.benchmark = True
     evaluate(query_loader, gallery_loader, model)
 
@@ -189,6 +190,44 @@ def main():
 
 
 def evaluate(query_loader, gallery_loader, model):
+
+    if args.nocalc:
+
+        query_pids = np.load(args.save_dir + "queryPID.npy")
+        query_camids = np.load(args.save_dir + "queryCamID.npy")
+        gallery_pids = np.load(args.save_dir + "galleryPID.npy")
+        gallery_camids = np.load(args.save_dir + "galleryCamID.npy")
+
+        distmat = np.load(args.save_dir + "distmat.npy")
+    else:
+        # extract features
+        (
+            query_feats,
+            query_pids,
+            query_camids,
+            gallery_feats,
+            gallery_pids,
+            gallery_camids,
+        ) = extract_features(model, query_loader, gallery_loader)
+        # compute distmat
+        distmat = compute_distmat(query_feats, gallery_feats)
+
+    print("Computing CMC and mAP...")
+    # compute cmc and mAP
+    cmc, mAP = eval_func(
+        distmat, query_pids, gallery_pids, query_camids, gallery_camids
+    )
+    print(
+        "mAP = " + "%.4f" % mAP + "\tRank-1 = " + "%.4f" % cmc[0],
+        "\tRank-5 = " + "%.4f" % cmc[4],
+    )
+
+    plot_cmc(cmc)
+
+    return
+
+
+def extract_features(model, query_loader, gallery_loader):
     print("Start evaluation...")
     query_feats = []
     query_pids = []
@@ -204,7 +243,7 @@ def evaluate(query_loader, gallery_loader, model):
 
     print("Processing query set...")
     queryN = 0
-    for i, (image, pid, camid) in enumerate(query_loader):
+    for image, pid, camid in tqdm(query_loader):
         # if i == 10:
         #     break
         # print("Extracting feature of image " + "%d:" % i)
@@ -224,10 +263,10 @@ def evaluate(query_loader, gallery_loader, model):
 
     print("Processing gallery set...")
     galleryN = 0
-    for i, (image, pid, camid) in enumerate(gallery_loader):
+    for image, pid, camid in tqdm(gallery_loader):
         # if i == 20:
         #     break
-        print("Extracting feature of image " + "%d:" % i)
+        # print("Extracting feature of image " + "%d:" % i)
         gallery_pids.append(pid)
         gallery_camids.append(camid)
         image = torch.autograd.Variable(image).cuda()
@@ -237,25 +276,7 @@ def evaluate(query_loader, gallery_loader, model):
 
     gallery_time = time.time() - end
     print("Processing gallery set... \tTime[{0:.3f}]".format(gallery_time))
-    print("Computing CMC and mAP...")
-    cmc, mAP, distmat = compute(
-        query_feats,
-        query_pids,
-        query_camids,
-        gallery_feats,
-        gallery_pids,
-        gallery_camids,
-    )
-    print("Saving distmat...")
-    np.save(args.save_dir + "distmat.npy", np.asarray(distmat))
-    np.savetxt(args.save_dir + "distmat.txt", np.asarray(distmat), fmt="%.4f")
 
-    print("mAP = " + "%.4f" % mAP + "\tRank-1 = " + "%.4f" % cmc[0])
-
-
-def compute(
-    query_feats, query_pids, query_camids, gallery_feats, gallery_pids, gallery_camids
-):
     # query
     qf = torch.cat(query_feats, dim=0)
 
@@ -270,9 +291,24 @@ def compute(
     m, n = qf.shape[0], gf.shape[0]
     qf = qf.view(m, -1)
     gf = gf.view(n, -1)
+
+    q_camids = np.squeeze(q_camids)
+    g_camids = np.squeeze(g_camids)
+
     print("Saving feature mat...")
+
     np.save(args.save_dir + "queryFeat.npy", qf)
+    np.save(args.save_dir + "queryPID.npy", q_pids)
+    np.save(args.save_dir + "queryCamID.npy", q_camids)
+
     np.save(args.save_dir + "galleryFeat.npy", gf)
+    np.save(args.save_dir + "galleryPID.npy", g_pids)
+    np.save(args.save_dir + "galleryCamID.npy", g_camids)
+
+    return qf, q_pids, q_camids, gf, g_pids, g_camids
+
+
+def compute_distmat(query_feats, gallery_feats):
 
     # pairwise l2 distance between query vector and gallery
     # similar to https://scikit-learn.org/0.16/modules/generated/sklearn.metrics.pairwise.euclidean_distances.html
@@ -286,20 +322,24 @@ def compute(
     # distmat.addmm_(1, -2, qf, gf.t())
     # distmat = distmat.cpu().numpy()
 
-
-    distmat = torch.cdist(qf,gf,p=2)
+    distmat = torch.cdist(query_feats, gallery_feats, p=2)
     distmat = distmat.cpu().numpy()
 
+    print("Saving distmat...")
+    np.save(args.save_dir + "distmat.npy", np.asarray(distmat))
+    np.savetxt(args.save_dir + "distmat.txt", np.asarray(distmat), fmt="%.4f")
 
-    q_camids = np.squeeze(q_camids)
-    g_camids = np.squeeze(g_camids)
-
-    cmc, mAP = eval_func(distmat, q_pids, g_pids, q_camids, g_camids)
-
-    return cmc, mAP, distmat
+    return distmat
 
 
-def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=100):
+def eval_func(
+    distmat: np.ndarray,
+    q_pids: np.ndarray,
+    g_pids: np.ndarray,
+    q_camids: np.ndarray,
+    g_camids: np.ndarray,
+    max_rank=100,
+):
     """Evaluation with market1501 metric
     Key: for each query identity, its gallery images from the same camera view are discarded.
     """
@@ -308,60 +348,110 @@ def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=100):
     if num_g < max_rank:
         max_rank = num_g
         print("Note: number of gallery samples is quite small, got {}".format(num_g))
-    
+
+    # sorted index of distmat in accending for ranking
     indices = np.argsort(distmat, axis=1)
-    matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
+
+    # check for every query, which gallery labels match the query label
+    # returns a binary matrix of shape: (no. of queries, no. of gallery)
+    # g_pids[indices] broadcasts the gallery labels by no, of queries
+    # matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
+    matches = np.array(g_pids[indices] == q_pids[:, np.newaxis])
+
     print("Saving resulting indexes...", indices.shape)
     np.save(args.save_dir + "result.npy", indices[:, : args.TopK] + 1)
     np.savetxt(args.save_dir + "result.txt", indices[:, : args.TopK] + 1, fmt="%d")
 
-    # compute cmc curve for each query
     all_cmc = []
+    # print(type(all_cmc))
     all_AP = []
     num_valid_q = 0.0  # number of valid query
-    for q_idx in range(num_q):
+    for q_idx in tqdm(range(num_q)):
         # get query pid and camid
         q_pid = q_pids[q_idx]
         q_camid = q_camids[q_idx]
 
         # remove gallery samples that have the same pid and camid with query
         order = indices[q_idx]
-        remove = np.squeeze(g_pids[order] == q_pid) & np.squeeze(g_camids[order] == q_camid)
+        remove = np.squeeze(g_pids[order] == q_pid) & np.squeeze(
+            g_camids[order] == q_camid
+        )
         keep = np.invert(remove)
 
-        # print(keep.shape)
-        # print(matches.shape) # (1678, 11579, 1)
-        # print(q_idx)
-        # print(keep.shape) # (11579,11579)
         # compute cmc curve
         # binary vector, positions with value 1 are correct matches
-        orig_cmc = matches[q_idx][keep]
-        if not np.any(orig_cmc):
+        rectified_matches = matches[q_idx][keep]
+        if not np.any(rectified_matches):
             # this condition is true when query identity does not appear in gallery
             continue
 
-        cmc = orig_cmc.cumsum()
+        # the cmc will be [0,0,...1,1,...1]
+        # denoting the rank at which the match is found
+        cmc = rectified_matches.cumsum()
+        # creating a step function, https://cysu.github.io/open-reid/notes/evaluation_metrics.html
         cmc[cmc > 1] = 1
 
+        # print(type(all_cmc))
+        # print(type(cmc[:max_rank].tolist()))
         all_cmc.append(cmc[:max_rank])
         num_valid_q += 1.0
 
         # compute average precision
         # reference: https://en.wikipedia.org/wiki/Evaluation_measures_(information_retrieval)#Average_precision
-        num_rel = orig_cmc.sum()
-        tmp_cmc = orig_cmc.cumsum()
-        tmp_cmc = [x / (i + 1.0) for i, x in enumerate(tmp_cmc)]
-        tmp_cmc = np.asarray(tmp_cmc) * orig_cmc
+
+        # num of relevant docs
+        num_rel = rectified_matches.sum()
+        # print(num_rel)
+
+        cum_matches = rectified_matches.cumsum()
+        # calculate the precision @ k for all k ranks
+        # precision_at_k = [x / (i + 1.0) for i, x in enumerate(cum_matches)]
+        # print(precision_at_k)
+        precision_at_k = cum_matches / (np.arange(len(cum_matches)) + 1.0)
+
+        # print("precision at k", precision_at_k)
+        # print("rectified_matches", rectified_matches)
+        # print("num_rel", num_rel)
+        # p @ k * relevance @ k
+        tmp_cmc = precision_at_k * rectified_matches.ravel()
+        # print(tmp_cmc)
         AP = tmp_cmc.sum() / num_rel
+        # print("AP", AP)
         all_AP.append(AP)
 
-    assert num_valid_q > 0, "Error: all query identities do not appear in gallery"
+        assert num_valid_q > 0, "Error: all query identities do not appear in gallery"
 
     all_cmc = np.asarray(all_cmc).astype(np.float32)
-    all_cmc = all_cmc.sum(0) / num_valid_q
+    all_cmc = all_cmc.sum(axis=0) / num_valid_q
     mAP = np.mean(all_AP)
 
     return all_cmc, mAP
+
+
+def plot_cmc(cmc_values: np.ndarray, topk=20):
+    # print(all_cmc.shape)
+    # Plot CMC curve for the query
+    # cmc_values = np.mean(all_cmc, axis=0)
+    # print(cmc_values)
+    cmc_values = cmc_values[:topk]
+
+    # Plot CMC Curve
+    plt.figure(figsize=(8, 5))
+    plt.plot(
+        range(1, len(cmc_values) + 1),
+        cmc_values,
+        marker="o",
+        fillstyle="none",
+        label="CMC Curve",
+    )
+    plt.xticks(range(1, len(cmc_values) + 1))
+    plt.xlabel("Rank k")
+    plt.ylabel("Recognition Percentage %")
+    plt.title("CMC Curve")
+    plt.legend()
+    plt.grid(True)
+    # plt.show()
+    plt.savefig(args.save_dir + "cmc_curve.png", format="png")
 
 
 def mkdir_if_missing(dir_path):

@@ -9,8 +9,8 @@ import numpy as np
 
 def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=50):
     """Evaluation with market1501 metric
-        Key: for each query identity, its gallery images from the same camera view are discarded.
-        """
+    Key: for each query identity, its gallery images from the same camera view are discarded.
+    """
     num_q, num_g = distmat.shape
     if num_g < max_rank:
         max_rank = num_g
@@ -21,7 +21,7 @@ def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=50):
     # compute cmc curve for each query
     all_cmc = []
     all_AP = []
-    num_valid_q = 0.  # number of valid query
+    num_valid_q = 0.0  # number of valid query
     for q_idx in range(num_q):
         # get query pid and camid
         q_pid = q_pids[q_idx]
@@ -43,13 +43,13 @@ def eval_func(distmat, q_pids, g_pids, q_camids, g_camids, max_rank=50):
         cmc[cmc > 1] = 1
 
         all_cmc.append(cmc[:max_rank])
-        num_valid_q += 1.
+        num_valid_q += 1.0
 
         # compute average precision
         # reference: https://en.wikipedia.org/wiki/Evaluation_measures_(information_retrieval)#Average_precision
         num_rel = orig_cmc.sum()
         tmp_cmc = orig_cmc.cumsum()
-        tmp_cmc = [x / (i + 1.) for i, x in enumerate(tmp_cmc)]
+        tmp_cmc = [x / (i + 1.0) for i, x in enumerate(tmp_cmc)]
         tmp_cmc = np.asarray(tmp_cmc) * orig_cmc
         AP = tmp_cmc.sum() / num_rel
         all_AP.append(AP)
