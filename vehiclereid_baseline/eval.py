@@ -10,16 +10,14 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
 from torchvision.datasets import FakeData
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
-from torch.autograd import Variable
 from tqdm import tqdm
 from networks.resnet import resnet50, resnet101
 from dataset.dataset import VeriDataset
-
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, adjusted_rand_score
 
 parser = argparse.ArgumentParser(description="PyTorch Relationship")
 
@@ -193,8 +191,10 @@ def evaluate(query_loader, gallery_loader, model):
 
     if args.nocalc:
 
+        query_feats = np.load(args.save_dir + "queryFeat.npy")
         query_pids = np.load(args.save_dir + "queryPID.npy")
         query_camids = np.load(args.save_dir + "queryCamID.npy")
+        gallery_feats = np.load(args.save_dir + "galleryFeat.npy")
         gallery_pids = np.load(args.save_dir + "galleryPID.npy")
         gallery_camids = np.load(args.save_dir + "galleryCamID.npy")
 
@@ -223,6 +223,10 @@ def evaluate(query_loader, gallery_loader, model):
     )
 
     plot_cmc(cmc)
+
+    pred_clusters = eval_cluster(gallery_feats, gallery_pids)
+
+    plot_cluster(gallery_feats, gallery_pids, pred_clusters)
 
     return
 
@@ -428,6 +432,26 @@ def eval_func(
     return all_cmc, mAP
 
 
+def eval_cluster(gallery_feat, true_labels):
+
+    transformed_feat = PCA(n_components=2).fit_transform(gallery_feat)
+
+    kmeans = KMeans(n_clusters=576, random_state=0).fit(transformed_feat)
+
+    predict = kmeans.fit_predict(transformed_feat)
+
+    silhouette_avg = silhouette_score(transformed_feat, predict)
+
+    adjusted_rand = adjusted_rand_score(
+        labels_true=true_labels.ravel(), labels_pred=predict
+    )
+
+    print("Silhouette Score: ", silhouette_avg)
+    print("Adjusted Rand Score: ", adjusted_rand)
+
+    return predict
+
+
 def plot_cmc(cmc_values: np.ndarray, topk=20):
     # print(all_cmc.shape)
     # Plot CMC curve for the query
@@ -452,6 +476,24 @@ def plot_cmc(cmc_values: np.ndarray, topk=20):
     plt.grid(True)
     # plt.show()
     plt.savefig(args.save_dir + "cmc_curve.png", format="png")
+
+
+def plot_cluster(reduced_feat, true_labels, pred_labels):
+
+    # Plot the reduced features
+    plt.figure(figsize=(8, 5))
+    plt.scatter(reduced_feat[:, 0], reduced_feat[:, 1], c=true_labels, cmap="viridis")
+    plt.title("True Labels")
+    plt.colorbar()
+    plt.savefig(args.save_dir + "true_labels.png", format="png")
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(reduced_feat[:, 0], reduced_feat[:, 1], c=pred_labels, cmap="viridis")
+    plt.title("Predicted Labels")
+    plt.colorbar()
+    plt.savefig(args.save_dir + "pred_labels.png", format="png")
+
+    return
 
 
 def mkdir_if_missing(dir_path):
