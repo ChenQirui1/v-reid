@@ -13,4 +13,4 @@ num_veri=576
 # CUDA_VISIBLE_DEVICES=0 python -u eval.py $queryPath_veri $queryList_veri $galleryPath_veri $galleryList_veri --dataset veri --backbone resnet50 --weights "./models/resnet50/Car_epoch_9.pth" --save_dir './results/veri/resnet50/'
 
 
-CUDA_VISIBLE_DEVICES=0 python -u test.py --gpu_ids 0 --name ft_ResNet50 --test_dir your_data_path  --batchsize 32 --which_epoch last
+CUDA_VISIBLE_DEVICES=0 python -u -m test.py --gpu_ids 0 --name ft_ResNet50 --test_dir ../../../dataset/VeRi  --batchsize 32 --which_epoch last

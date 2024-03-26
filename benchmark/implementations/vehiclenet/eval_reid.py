@@ -8,7 +8,6 @@ import torch
 from tqdm import tqdm
 import time
 import shutil
-import os
 
 def extract_features(args, model, query_loader, gallery_loader):
     print("Start evaluation...")
@@ -205,31 +204,3 @@ def eval_func(
     return all_cmc, mAP
 
 
-def gen_clustered_data(size,pred_labels,no_of_classes, img_dir, save_dir, filepath_list_path):
-
-    def write_clusters(file_list, group):
-        mkdir_if_missing(f"{save_dir}/{group}")
-        for filename in file_list:
-            shutil.copy(img_dir + filename, f"{save_dir}/{group}/{filename}")
-
-    shutil.rmtree(save_dir)
-
-    with open(filepath_list_path,"r") as f:
-        file_content = f.read()
-        img_paths = np.array(file_content.split("\n"))
-    
-    for i in range(no_of_classes):
-        selection = np.argwhere([pred_labels == i])
-        selection = selection[:,1]
-        try:
-            selection = np.random.choice(selection,size,replace=False)
-        except:
-            continue
-        file_list = img_paths[selection]
-
-        write_clusters(file_list,i)
-
-
-def mkdir_if_missing(dir_path):
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)

@@ -6,23 +6,23 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader
 from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
+from dataset.dataset import VeriDataset
 import time
 import os
 import scipy.io
 import yaml
 import math
 from tqdm import tqdm
-from model import ft_net, ft_net_dense, PCB, PCB_test
+# from model import ft_net, ft_net_dense, ft_net_hr, ft_net_swin, ft_net_swinv2, ft_net_efficient, ft_net_NAS, ft_net_convnext, PCB, PCB_test
+from model import ft_net, ft_net_dense,  PCB, PCB_test
 # from utils import fuse_all_conv_bn
-from eval_reid import eval_func
-from dataset.dataset import VeriDataset
-from torch.utils.data import DataLoader
 
 
 
@@ -59,10 +59,10 @@ opt = parser.parse_args()
 config_path = os.path.join('./model',opt.name,'opts.yaml')
 with open(config_path, 'r') as stream:
         config = yaml.load(stream, Loader=yaml.FullLoader) # for the new pyyaml via 'conda install pyyaml'
-opt.fp16 = config['fp16'] 
+opt.fp16 = config['fp16']
 opt.PCB = config['PCB']
 opt.use_dense = config['use_dense']
-opt.use_NAS = config['use_NAS']
+# opt.use_NAS = config['use_NAS']
 opt.stride = config['stride']
 if 'use_swin' in config:
     opt.use_swin = config['use_swin']
@@ -145,6 +145,8 @@ if opt.PCB:
     h, w = 384, 192
 
 
+
+#loading data
 # data_dir = test_dir
 
 # if opt.multi:
@@ -152,12 +154,9 @@ if opt.PCB:
 #     dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=opt.batchsize,
 #                                              shuffle=False, num_workers=16) for x in ['gallery','query','multi-query']}
 # else:
-#     image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ,data_transforms) for x in ['image_test','image_query']}
+#     image_datasets = {x: datasets.ImageFolder( os.path.join(data_dir,x) ,data_transforms) for x in ['gallery','query']}
 #     dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=opt.batchsize,
 #                                              shuffle=False, num_workers=16) for x in ['gallery','query']}
-# class_names = image_datasets['query'].classes
-use_gpu = torch.cuda.is_available()
-
 
 def get_dataset(dataset_name, query_dir, query_list, gallery_dir, gallery_list):
     normalize = transforms.Normalize(
@@ -202,12 +201,15 @@ def get_dataset(dataset_name, query_dir, query_list, gallery_dir, gallery_list):
     return image_datasets, dataloaders
 
 # Path to Images
-queryPath_veri="../../../dataset/VeRi/image_query/"
-queryList_veri="../../list/veri_query_list.txt"
-galleryPath_veri="../../../dataset/VeRi/image_test/"
-galleryList_veri="../../list/veri_test_list.txt"
+queryPath_veri="../dataset/VeRi/image_query/"
+queryList_veri="../dataset/VeRi/list/veri_query_list.txt"
+galleryPath_veri="../dataset/VeRi/image_test/"
+galleryList_veri="../dataset/VeRi/list/veri_test_list.txt"
 
 image_datasets, dataloaders = get_dataset("veri",queryPath_veri, queryList_veri, galleryPath_veri,galleryList_veri)
+# class_names = image_datasets['query'].classes
+use_gpu = torch.cuda.is_available()
+
 
 
 
@@ -256,7 +258,8 @@ def extract_feature(model,dataloaders):
             opt.linear_num = 2048
 
     for iter, data in enumerate(dataloaders):
-        img, label = data
+        # img, label = data
+        img, label, _ = data
         n, c, h, w = img.size()
         # count += n
         # print(count)
@@ -298,26 +301,43 @@ def extract_feature(model,dataloaders):
     pbar.close()
     return features
 
-def get_id(img_path):
-    camera_id = []
-    labels = []
-    for path, v in img_path:
-        #filename = path.split('/')[-1]
-        filename = os.path.basename(path)
-        label = filename[0:4]
-        camera = filename.split('c')[1]
-        if label[0:2]=='-1':
-            labels.append(-1)
-        else:
-            labels.append(int(label))
-        camera_id.append(int(camera[0]))
-    return camera_id, labels
+# def get_id(img_path):
+#     camera_id = []
+#     labels = []
+#     for path, v in img_path:
+#         #filename = path.split('/')[-1]
+#         filename = os.path.basename(path)
+#         label = filename[0:4]
+#         camera = filename.split('c')[1]
+#         if label[0:2]=='-1':
+#             labels.append(-1)
+#         else:
+#             labels.append(int(label))
+#         camera_id.append(int(camera[0]))
+#     return camera_id, labels
 
-gallery_path = image_datasets['gallery'].imgs
-query_path = image_datasets['query'].imgs
+# gallery_path = image_datasets['gallery'].imgs
+# query_path = image_datasets['query'].imgs
 
-gallery_cam,gallery_label = get_id(gallery_path)
-query_cam,query_label = get_id(query_path)
+# gallery_cam,gallery_label = get_id(gallery_path)
+# query_cam,query_label = get_id(query_path)
+
+
+#get gallery/query cam and labels
+gallery_cam = []
+gallery_label = []
+for (img, label, cam_id) in dataloaders['gallery'].dataset:
+    gallery_cam.append(cam_id[1:])
+    gallery_label.append(label)
+
+query_cam = []
+query_label = []
+for (img, label, cam_id) in dataloaders['query'].dataset:
+    query_cam.append(cam_id[1:])
+    query_label.append(label)
+# print(gallery_cam)
+# print(gallery_label)
+
 
 if opt.multi:
     mquery_path = image_datasets['multi-query'].imgs
@@ -328,20 +348,21 @@ if opt.multi:
 print('-------test-----------')
 if opt.use_dense:
     model_structure = ft_net_dense(opt.nclasses, stride = opt.stride, linear_num=opt.linear_num)
-elif opt.use_NAS:
-    model_structure = ft_net_NAS(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_swin:
-    model_structure = ft_net_swin(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_swinv2:
-    model_structure = ft_net_swinv2(opt.nclasses, (h,w),  linear_num=opt.linear_num)
-elif opt.use_convnext:
-    model_structure = ft_net_convnext(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_efficient:
-    model_structure = ft_net_efficient(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_hr:
-    model_structure = ft_net_hr(opt.nclasses, linear_num=opt.linear_num)
+# elif opt.use_NAS:
+#     model_structure = ft_net_NAS(opt.nclasses, linear_num=opt.linear_num)
+# elif opt.use_swin:
+#     model_structure = ft_net_swin(opt.nclasses, linear_num=opt.linear_num)
+# elif opt.use_swinv2:
+#     model_structure = ft_net_swinv2(opt.nclasses, (h,w),  linear_num=opt.linear_num)
+# elif opt.use_convnext:
+#     model_structure = ft_net_convnext(opt.nclasses, linear_num=opt.linear_num)
+# elif opt.use_efficient:
+#     model_structure = ft_net_efficient(opt.nclasses, linear_num=opt.linear_num)
+# elif opt.use_hr:
+#     model_structure = ft_net_hr(opt.nclasses, linear_num=opt.linear_num)
 else:
-    model_structure = ft_net(opt.nclasses, stride = opt.stride, ibn = opt.ibn, linear_num=opt.linear_num)
+    # model_structure = ft_net(opt.nclasses, stride = opt.stride, ibn = opt.ibn, linear_num=opt.linear_num)
+    model_structure = ft_net(opt.nclasses, stride = opt.stride)
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses)
@@ -371,8 +392,8 @@ if use_gpu:
     model = model.cuda()
 
 
-print('Here I fuse conv and bn for faster inference, and it does not work for transformers. Comment out this following line if you do not want to fuse conv&bn.')
-model = fuse_all_conv_bn(model)
+# print('Here I fuse conv and bn for faster inference, and it does not work for transformers. Comment out this following line if you do not want to fuse conv&bn.')
+# model = fuse_all_conv_bn(model)
 
 # We can optionally trace the forward method with PyTorch JIT so it runs faster.
 # To do so, we can call `.trace` on the reparamtrized module with dummy inputs
@@ -390,36 +411,16 @@ with torch.no_grad():
     if opt.multi:
         mquery_feature = extract_feature(model,dataloaders['multi-query'])
 time_elapsed = time.time() - since
+print('Training complete in {:.0f}m {:.2f}s'.format(
+            time_elapsed // 60, time_elapsed % 60))
+# Save to Matlab for check
+result = {'gallery_f':gallery_feature.numpy(),'gallery_label':gallery_label,'gallery_cam':gallery_cam,'query_f':query_feature.numpy(),'query_label':query_label,'query_cam':query_cam}
+scipy.io.savemat('pytorch_result.mat',result)
 
+print(opt.name)
+result = './model/%s/result.txt'%opt.name
+os.system('python evaluate_gpu.py | tee -a %s'%result)
 
-#### ADD in eval ####
-distmat = compute_distmat(query_feats=query_feature,gallery_feats=gallery_feature)
-
-print("Computing CMC and mAP...")
-# compute cmc and mAP
-cmc, mAP = eval_func(
-    distmat, query_label, gallery_label, query_cam, gallery_cam
-)
-print(
-    "mAP = " + "%.4f" % mAP + "\tRank-1 = " + "%.4f" % cmc[0],
-    "\tRank-5 = " + "%.4f" % cmc[4],
-)
-
-plot_cmc(cmc)
-
-
-
-
-# print('Training complete in {:.0f}m {:.2f}s'.format(
-#             time_elapsed // 60, time_elapsed % 60))
-# # Save to Matlab for check
-# result = {'gallery_f':gallery_feature.numpy(),'gallery_label':gallery_label,'gallery_cam':gallery_cam,'query_f':query_feature.numpy(),'query_label':query_label,'query_cam':query_cam}
-# scipy.io.savemat('pytorch_result.mat',result)
-
-# print(opt.name)
-# result = './model/%s/result.txt'%opt.name
-# os.system('python evaluate_gpu.py | tee -a %s'%result)
-
-# if opt.multi:
-#     result = {'mquery_f':mquery_feature.numpy(),'mquery_label':mquery_label,'mquery_cam':mquery_cam}
-#     scipy.io.savemat('multi_query.mat',result)
+if opt.multi:
+    result = {'mquery_f':mquery_feature.numpy(),'mquery_label':mquery_label,'mquery_cam':mquery_cam}
+    scipy.io.savemat('multi_query.mat',result)
