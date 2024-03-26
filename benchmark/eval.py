@@ -409,12 +409,16 @@ def eval_loop(func):
 
             (
                 query_feats,
-                query_pids,
-                query_camids,
                 gallery_feats,
-                gallery_pids,
-                gallery_camids,
             ) = result
+
+            STANDARD_PID_CAMID = "./results/standard" 
+
+            query_pids = np.load( STANDARD_PID_CAMID + "queryPID.npy")
+            query_camids = np.load( STANDARD_PID_CAMID + "queryCamID.npy")
+
+            gallery_pids = np.load(STANDARD_PID_CAMID + "galleryPID.npy")
+            gallery_camids = np.load(STANDARD_PID_CAMID + "galleryCamID.npy")
 
             np.save(args.save_dir + "queryFeat.npy", query_feats)
             np.save(args.save_dir + "queryPID.npy", query_pids)
