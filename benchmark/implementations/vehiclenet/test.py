@@ -20,7 +20,7 @@ import math
 from tqdm import tqdm
 from model import ft_net, ft_net_dense, PCB, PCB_test
 # from utils import fuse_all_conv_bn
-from eval_reid import eval_func
+from eval_reid import eval_func, compute_distmat
 from dataset.dataset import VeriDataset
 from torch.utils.data import DataLoader
 
@@ -64,6 +64,9 @@ opt.PCB = config['PCB']
 opt.use_dense = config['use_dense']
 opt.use_NAS = config['use_NAS']
 opt.stride = config['stride']
+
+
+
 if 'use_swin' in config:
     opt.use_swin = config['use_swin']
 if 'use_swinv2' in config:
@@ -185,13 +188,13 @@ def get_dataset(dataset_name, query_dir, query_list, gallery_dir, gallery_list):
     query_loader = DataLoader(
         dataset=query_set,
         num_workers=4,
-        batch_size=opt.batchsize,
+        batch_size=1,
         shuffle=False,
     )
     gallery_loader = DataLoader(
         dataset=gallery_set,
         num_workers=4,
-        batch_size=opt.batchsize,
+        batch_size=1,
         shuffle=False,
     )
 
@@ -244,6 +247,10 @@ def fliplr(img):
 def extract_feature(model,dataloaders):
     #features = torch.FloatTensor()
     # count = 0
+
+    pids = []
+    cam_ids = []
+
     pbar = tqdm()
     if opt.linear_num <= 0:
         if opt.use_swin or opt.use_swinv2 or opt.use_dense or opt.use_convnext:
@@ -256,8 +263,12 @@ def extract_feature(model,dataloaders):
             opt.linear_num = 2048
 
     for iter, data in enumerate(dataloaders):
-        img, label = data
+        img, label, camid = data
         n, c, h, w = img.size()
+
+        pids.append(label)
+        cam_ids.append(camid)
+
         # count += n
         # print(count)
         pbar.update(n)
@@ -296,28 +307,39 @@ def extract_feature(model,dataloaders):
         end = min( (iter+1)*opt.batchsize, len(dataloaders.dataset))
         features[ start:end, :] = ff
     pbar.close()
-    return features
 
-def get_id(img_path):
-    camera_id = []
-    labels = []
-    for path, v in img_path:
-        #filename = path.split('/')[-1]
-        filename = os.path.basename(path)
-        label = filename[0:4]
-        camera = filename.split('c')[1]
-        if label[0:2]=='-1':
-            labels.append(-1)
-        else:
-            labels.append(int(label))
-        camera_id.append(int(camera[0]))
-    return camera_id, labels
 
-gallery_path = image_datasets['gallery'].imgs
-query_path = image_datasets['query'].imgs
+    pids = np.asarray(pids).ravel()
+    cam_ids = np.asarray(cam_ids).ravel()
+    # print("pids", pids.shape)
+    # print("cam_ids", cam_ids.shape)
 
-gallery_cam,gallery_label = get_id(gallery_path)
-query_cam,query_label = get_id(query_path)
+
+    return features, pids, cam_ids
+
+
+# def get_id(img_path):
+#     camera_id = []
+#     labels = []
+#     for path, v in img_path:
+#         #filename = path.split('/')[-1]
+#         filename = os.path.basename(path)
+#         label = filename[0:4]
+#         camera = filename.split('c')[1]
+#         if label[0:2]=='-1':
+#             labels.append(-1)
+#         else:
+#             labels.append(int(label))
+#         camera_id.append(int(camera[0]))
+#     return camera_id, labels
+
+
+# gallery_path = image_datasets['gallery'].imgs
+# query_path = image_datasets['query'].imgs
+
+# gallery_cam,gallery_label = get_id(gallery_path)
+# query_cam,query_label = get_id(query_path)
+
 
 if opt.multi:
     mquery_path = image_datasets['multi-query'].imgs
@@ -326,22 +348,22 @@ if opt.multi:
 ######################################################################
 # Load Collected data Trained model
 print('-------test-----------')
-if opt.use_dense:
+if 'use_dense' in opt and opt.use_dense:
     model_structure = ft_net_dense(opt.nclasses, stride = opt.stride, linear_num=opt.linear_num)
-elif opt.use_NAS:
+elif 'use_NAS' in opt and opt.use_NAS:
     model_structure = ft_net_NAS(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_swin:
+elif 'use_swin' in opt and opt.use_swin:
     model_structure = ft_net_swin(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_swinv2:
+elif 'use_swinv2' in opt and opt.use_swinv2:
     model_structure = ft_net_swinv2(opt.nclasses, (h,w),  linear_num=opt.linear_num)
-elif opt.use_convnext:
+elif 'use_convnext' in opt and opt.use_convnext:
     model_structure = ft_net_convnext(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_efficient:
+elif 'use_efficient' in opt and opt.use_efficient:
     model_structure = ft_net_efficient(opt.nclasses, linear_num=opt.linear_num)
-elif opt.use_hr:
+elif 'use_hr' in opt and opt.use_hr:
     model_structure = ft_net_hr(opt.nclasses, linear_num=opt.linear_num)
 else:
-    model_structure = ft_net(opt.nclasses, stride = opt.stride, ibn = opt.ibn, linear_num=opt.linear_num)
+    model_structure = ft_net(opt.nclasses, stride = opt.stride)
 
 if opt.PCB:
     model_structure = PCB(opt.nclasses)
@@ -372,7 +394,7 @@ if use_gpu:
 
 
 print('Here I fuse conv and bn for faster inference, and it does not work for transformers. Comment out this following line if you do not want to fuse conv&bn.')
-model = fuse_all_conv_bn(model)
+# model = fuse_all_conv_bn(model)
 
 # We can optionally trace the forward method with PyTorch JIT so it runs faster.
 # To do so, we can call `.trace` on the reparamtrized module with dummy inputs
@@ -385,8 +407,8 @@ print(model)
 # Extract feature
 since = time.time()
 with torch.no_grad():
-    gallery_feature = extract_feature(model,dataloaders['gallery'])
-    query_feature = extract_feature(model,dataloaders['query'])
+    gallery_feature, gallery_label, gallery_cam = extract_feature(model,dataloaders['gallery'])
+    query_feature, query_label, query_cam = extract_feature(model,dataloaders['query'])
     if opt.multi:
         mquery_feature = extract_feature(model,dataloaders['multi-query'])
 time_elapsed = time.time() - since
@@ -394,6 +416,28 @@ time_elapsed = time.time() - since
 
 #### ADD in eval ####
 distmat = compute_distmat(query_feats=query_feature,gallery_feats=gallery_feature)
+
+# query
+# qf = torch.cat(query_feats, dim=0)
+
+# q_pids = np.asarray(query_label)
+# q_camids = np.asarray(query_cam).T
+
+# # gallery
+# # gf = torch.cat(gallery_feats, dim=0)
+# g_pids = np.asarray(gallery_label)
+# g_camids = np.asarray(gallery_cam).T
+
+# m, n = qf.shape[0], gf.shape[0]
+# qf = qf.view(m, -1)
+# gf = gf.view(n, -1)
+
+# q_camids = np.squeeze(query_cam)
+# g_camids = np.squeeze(gallery_cam)
+# print(query_cam)
+# print(gallery_cam)
+
+print(query_label)
 
 print("Computing CMC and mAP...")
 # compute cmc and mAP
@@ -406,7 +450,6 @@ print(
 )
 
 plot_cmc(cmc)
-
 
 
 

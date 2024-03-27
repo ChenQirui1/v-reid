@@ -348,6 +348,16 @@ def eval_func(
     """Evaluation with market1501 metric
     Key: for each query identity, its gallery images from the same camera view are discarded.
     """
+
+    print("q_pids",q_pids.shape)
+    print("g_pids",g_pids.shape)
+    print("q_camids",q_camids.shape)
+    print("g_camids",g_camids.shape)
+
+    q_pids = q_pids.ravel()
+    g_pids = g_pids.ravel()
+
+
     num_q, num_g = distmat.shape
     max_rank = args.TopK
     if num_g < max_rank:
@@ -361,6 +371,7 @@ def eval_func(
     # returns a binary matrix of shape: (no. of queries, no. of gallery)
     # g_pids[indices] broadcasts the gallery labels by no, of queries
     # matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
+
     matches = np.array(g_pids[indices] == q_pids[:, np.newaxis])
 
     print("Saving resulting indexes...", indices.shape)

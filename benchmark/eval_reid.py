@@ -120,8 +120,13 @@ def eval_func(
     """Evaluation with market1501 metric
     Key: for each query identity, its gallery images from the same camera view are discarded.
     """
+    print("q_pids",q_pids.shape)
+    print("g_pids",g_pids.shape)
+    print("q_camids",q_camids.shape)
+    print("g_camids",g_camids.shape)
+
     num_q, num_g = distmat.shape
-    max_rank = args.TopK
+    # max_rank = args.TopK
     if num_g < max_rank:
         max_rank = num_g
         print("Note: number of gallery samples is quite small, got {}".format(num_g))

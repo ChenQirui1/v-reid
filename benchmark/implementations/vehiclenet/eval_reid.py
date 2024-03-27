@@ -108,7 +108,6 @@ def compute_distmat(query_feats, gallery_feats):
 
 
 def eval_func(
-    args,
     distmat: np.ndarray,
     q_pids: np.ndarray,
     g_pids: np.ndarray,
@@ -120,7 +119,7 @@ def eval_func(
     Key: for each query identity, its gallery images from the same camera view are discarded.
     """
     num_q, num_g = distmat.shape
-    max_rank = args.TopK
+    # max_rank = args.TopK
     if num_g < max_rank:
         max_rank = num_g
         print("Note: number of gallery samples is quite small, got {}".format(num_g))
@@ -128,15 +127,22 @@ def eval_func(
     # sorted index of distmat in accending for ranking
     indices = np.argsort(distmat, axis=1)
 
+
     # check for every query, which gallery labels match the query label
     # returns a binary matrix of shape: (no. of queries, no. of gallery)
     # g_pids[indices] broadcasts the gallery labels by no, of queries
     # matches = (g_pids[indices] == q_pids[:, np.newaxis]).astype(np.int32)
+    print(g_pids)
     matches = np.array(g_pids[indices] == q_pids[:, np.newaxis])
 
     print("Saving resulting indexes...", indices.shape)
-    np.save(args.save_dir + "result.npy", indices[:, : args.TopK] + 1)
-    np.savetxt(args.save_dir + "result.txt", indices[:, : args.TopK] + 1, fmt="%d")
+    # np.save(args.save_dir + "result.npy", indices[:, : args.TopK] + 1)
+    # np.savetxt(args.save_dir + "result.txt", indices[:, : args.TopK] + 1, fmt="%d")
+
+    # np.save(args.save_dir + "result.npy", indices[:, : max_rank] + 1)
+    # np.savetxt(args.save_dir + "result.txt", indices[:, : max_rank] + 1, fmt="%d")
+
+
 
     all_cmc = []
     # print(type(all_cmc))
