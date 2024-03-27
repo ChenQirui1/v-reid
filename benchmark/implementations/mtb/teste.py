@@ -13,6 +13,7 @@ import torch.multiprocessing
 import os
 import yaml
 from utils import re_ranking
+from eval_reid import eval_func
 #import cv2
 
 
@@ -170,7 +171,8 @@ def test_epoch(model, device, dataloader_q, dataloader_g, model_arch, remove_jun
     del qf, gf
 
     
-    cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids, remove_junk=remove_junk)
+    # cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids, remove_junk=remove_junk)
+    cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids)
     print(f'mAP = {mAP},  CMC1= {cmc[0]}, CMC5= {cmc[4]}')
 
     return cmc, mAP
