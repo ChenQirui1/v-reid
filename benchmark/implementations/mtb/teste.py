@@ -14,6 +14,7 @@ import os
 import yaml
 from utils import re_ranking
 from eval_reid import eval_func
+from eval_clustering import gen_clustered_data, eval_cluster
 #import cv2
 
 
@@ -168,14 +169,18 @@ def test_epoch(model, device, dataloader_q, dataloader_g, model_arch, remove_jun
     #     np.save(f, q_view_id)
     # with open(args.path_weights +'g_view.npy', 'wb') as f:
     #     np.save(f, g_view_id)
-    del qf, gf
+    # del qf, gf
+
+    return distmat, q_vids, g_vids, q_camids, g_camids, qf, gf
 
     
-    # cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids, remove_junk=remove_junk)
-    cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids)
-    print(f'mAP = {mAP},  CMC1= {cmc[0]}, CMC5= {cmc[4]}')
+    # # cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids, remove_junk=remove_junk)
+    # cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids)
+    # print(f'mAP = {mAP},  CMC1= {cmc[0]}, CMC5= {cmc[4]}')
 
-    return cmc, mAP
+
+
+    # return cmc, mAP
 
 
 if __name__ == "__main__":
@@ -285,7 +290,15 @@ if __name__ == "__main__":
         with open(args.path_weights +'result_cmc_l2_'+ str(l2) + '_mean_' + str(mean) +'.npy', 'wb') as f:
             np.save(f, cmc1)
     else:
-        cmc, mAP = test_epoch(model, device, data_q, data_g, data['model_arch'], remove_junk=True, scaler=scaler, re_rank=args.re_rank)
+        distmat, q_vids, g_vids, q_camids, g_camids, qf, gf = test_epoch(model, device, data_q, data_g, data['model_arch'], remove_junk=True, scaler=scaler, re_rank=args.re_rank)
+        # cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids, remove_junk=remove_junk)
+        cmc, mAP = eval_func(distmat, q_vids, g_vids, q_camids, g_camids)
+        print(f'mAP = {mAP},  CMC1= {cmc[0]}, CMC5= {cmc[4]}')
+
+        #gen clusters
+        pred = eval_cluster(gf.cpu(), g_vids)
+
+        gen_clustered_data(5, pred, 576, data['teste_dir'],"./clusters",data['gallery_list_file'])
         print(f'mAP = {mAP},  CMC1= {cmc[0]}, CMC5= {cmc[4]}')
         with open(args.path_weights +'result_map_l2_'+ str(l2) + '_mean_' + str(mean) +'.npy', 'wb') as f:
             np.save(f, mAP)
